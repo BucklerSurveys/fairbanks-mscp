@@ -1,0 +1,905 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fairbanks MSCP</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Full-bleed point-cloud canvas; floating panels styled like car-park wayfinding signs. One dark look by design. */
+:root {
+  --ground: #0e1216;
+  --panel: rgba(19, 24, 30, 0.9);
+  --line: rgba(231, 233, 228, 0.13);
+  --fg: #e7e9e4;
+  --muted: #8f99a1;
+  --accent: #f0b030;
+  --accent-ink: #1b1406;
+  --display: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  --gap: 12px;
+  color-scheme: dark;
+}
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; overflow: hidden; background: var(--ground); color: var(--fg); font-family: var(--display); font-size: 15px; }
+#view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; cursor: grab; }
+#view.measuring { cursor: crosshair; }
+#overlay { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+
+#title { position: fixed; top: calc(var(--gap) + env(safe-area-inset-top, 0px)); left: calc(var(--gap) + env(safe-area-inset-left, 0px)); padding: 10px 14px 11px; max-width: min(320px, calc(100vw - 180px)); }
+#title h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: 0.01em; line-height: 1.1; text-wrap: balance; }
+#title .meta { margin-top: 3px; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+#progress { margin-top: 8px; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+#progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+#progress-label { margin-top: 4px; color: var(--muted); font-size: 12px; font-family: var(--mono); }
+
+#levels { position: fixed; left: calc(var(--gap) + env(safe-area-inset-left, 0px)); top: 50%; transform: translateY(-50%); padding: 8px; display: flex; flex-direction: column; gap: 6px; align-items: stretch; max-height: calc(100% - 260px); overflow-y: auto; }
+#levels .cap { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); text-align: center; }
+.lv { display: grid; grid-template-columns: 38px auto; align-items: center; gap: 8px; padding: 3px 8px 3px 3px; border-radius: 7px; text-align: left; }
+.lv b { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 6px; border: 2px solid var(--fg); font-size: 20px; font-weight: 700; }
+.lv span { font-size: 12px; color: var(--muted); font-family: var(--mono); white-space: nowrap; }
+.lv:hover b { border-color: var(--accent); }
+.lv.on b { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.lv.here span { color: var(--accent); }
+#cut { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); padding: 4px 2px 0; }
+#cut input { accent-color: var(--accent); }
+
+#mapbox { position: fixed; top: calc(var(--gap) + env(safe-area-inset-top, 0px)); right: calc(var(--gap) + env(safe-area-inset-right, 0px)); padding: 6px; }
+#mini { display: block; width: 190px; height: 190px; border-radius: 6px; cursor: pointer; touch-action: none; }
+#mapbox .cap { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); padding: 5px 2px 0; display: flex; justify-content: space-between; }
+
+#bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--gap) + env(safe-area-inset-bottom, 0px)); display: flex; gap: 4px; align-items: center; padding: 5px; max-width: calc(100% - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)); overflow-x: auto; scrollbar-width: none; }
+#bar::-webkit-scrollbar { display: none; }
+#bar .sep { width: 1px; align-self: stretch; background: var(--line); margin: 4px 3px; flex: none; }
+.tb { flex: none; padding: 7px 11px; border-radius: 7px; font-weight: 600; font-size: 14px; letter-spacing: 0.02em; white-space: nowrap; }
+.tb:hover { background: rgba(231,233,228,.08); }
+.tb.on { background: var(--accent); color: var(--accent-ink); }
+.seg { display: flex; flex: none; border: 1px solid var(--line); border-radius: 8px; padding: 2px; gap: 2px; }
+.seg .tb { padding: 5px 10px; }
+#size { width: 84px; accent-color: var(--accent); flex: none; }
+.lbl { font-size: 12px; color: var(--muted); padding-left: 6px; flex: none; }
+
+#readout { position: fixed; left: calc(var(--gap) + env(safe-area-inset-left, 0px)); bottom: calc(70px + env(safe-area-inset-bottom, 0px)); padding: 9px 12px; font-family: var(--mono); font-size: 12.5px; line-height: 1.55; font-variant-numeric: tabular-nums; }
+#readout .h { font-family: var(--display); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+#readout em { font-style: normal; color: var(--muted); display: inline-block; width: 1.3em; }
+
+#joy { position: fixed; left: calc(28px + env(safe-area-inset-left, 0px)); bottom: calc(150px + env(safe-area-inset-bottom, 0px)); width: 120px; height: 120px; border-radius: 50%; border: 2px solid var(--line); background: rgba(19,24,30,.55); touch-action: none; }
+#joy i { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border-radius: 50%; background: var(--accent); opacity: .85; }
+
+#loading { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none; }
+#loading div { font-size: 18px; color: var(--muted); letter-spacing: .04em; }
+
+#help { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(8,10,13,.55); padding: 16px; }
+#help .panel { max-width: 560px; width: 100%; padding: 20px 22px; max-height: calc(100% - 32px); overflow-y: auto; box-sizing: border-box; }
+#help h2 { margin: 0 0 4px; font-size: 22px; }
+#help p { margin: 0 0 12px; color: var(--muted); line-height: 1.45; }
+#help h3 { margin: 14px 0 6px; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+#help dl { display: grid; grid-template-columns: max-content 1fr; gap: 5px 14px; margin: 0; font-size: 14.5px; }
+#help dt { font-family: var(--mono); font-size: 12.5px; color: var(--fg); padding-top: 2px; }
+#help dd { margin: 0; color: var(--muted); }
+#help .go { margin-top: 18px; background: var(--accent); color: var(--accent-ink); font-weight: 700; padding: 9px 18px; border-radius: 7px; }
+
+#toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(76px + env(safe-area-inset-bottom, 0px)); padding: 8px 14px; font-size: 14px; }
+
+@media (max-width: 720px) {
+  :root { --gap: 8px; }
+  #title { padding: 8px 10px; max-width: calc(100vw - 150px); }
+  #title h1 { font-size: 18px; }
+  #title .meta { font-size: 11.5px; }
+  #mini { width: 118px; height: 118px; }
+  #levels { top: auto; transform: none; bottom: calc(66px + env(safe-area-inset-bottom, 0px)); left: auto; right: calc(var(--gap) + env(safe-area-inset-right, 0px)); max-height: calc(100% - 330px); }
+  .lv { grid-template-columns: 32px; padding: 2px; }
+  .lv b { width: 32px; height: 32px; font-size: 16px; }
+  .lv span, #cut span { display: none; }
+  #readout { bottom: calc(62px + env(safe-area-inset-bottom, 0px)); font-size: 11px; padding: 7px 9px; }
+  #joy { bottom: calc(170px + env(safe-area-inset-bottom, 0px)); left: calc(18px + env(safe-area-inset-left, 0px)); }
+  .lbl, #size { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { #progress i { transition: none; } }
+</style>
+
+</head>
+<body>
+<canvas id="view" tabindex="0" aria-label="3D point cloud view"></canvas>
+<svg id="overlay" aria-hidden="true"></svg>
+
+<div id="loading"><div>Loading scan…</div></div>
+
+<div id="title" class="panel">
+  <h1>Fairbanks MSCP</h1>
+  <div class="meta" id="meta">Laser scan survey</div>
+  <div id="progress"><i></i></div>
+  <div id="progress-label"></div>
+</div>
+
+<div id="levels" class="panel" aria-label="Levels"></div>
+
+<div id="mapbox" class="panel">
+  <canvas id="mini" aria-label="Plan view. Click to move there."></canvas>
+  <div class="cap"><span>Plan</span><span>N ↑</span></div>
+</div>
+
+<div id="readout" class="panel" hidden></div>
+
+<div id="joy" hidden><i></i></div>
+
+<div id="bar" class="panel" role="toolbar" aria-label="Viewer tools">
+  <div class="seg" role="group" aria-label="Navigation mode">
+    <button class="tb on" id="m-orbit" title="Fly around the building">Orbit</button>
+    <button class="tb" id="m-walk" title="Walk through at eye height">Walk</button>
+  </div>
+  <button class="tb" id="v-home" title="Whole site view">Overview</button>
+  <button class="tb" id="v-plan" title="Look straight down">Plan</button>
+  <button class="tb" id="ground" title="Keep eye height 1.6 m above the floor" hidden>Stay on floor</button>
+  <div class="sep"></div>
+  <button class="tb" id="measure" title="Click two points to measure">Measure</button>
+  <div class="sep"></div>
+  <div class="seg" role="group" aria-label="Colour">
+    <button class="tb on" id="c-rgb" title="Scanner photo colour">Photo</button>
+    <button class="tb" id="c-h" title="Colour by height">Height</button>
+  </div>
+  <button class="tb on" id="edl" title="Edge shading">Shading</button>
+  <span class="lbl">Point size</span>
+  <input type="range" id="size" min="0.4" max="2.5" step="0.1" value="1" aria-label="Point size">
+  <div class="sep"></div>
+  <button class="tb" id="helpbtn" title="Controls">Help</button>
+</div>
+
+<div id="toast" class="panel" hidden></div>
+
+<div id="help" hidden>
+  <div class="panel" role="dialog" aria-labelledby="help-h">
+    <h2 id="help-h">Getting around</h2>
+    <p>This is the laser scan of the car park. Pick a level on the left. Use <b>Orbit</b> to fly around the outside, or <b>Walk</b> to look around at eye height. Click the small plan to jump to a spot.</p>
+    <h3>Orbit</h3>
+    <dl>
+      <dt>Drag</dt><dd>Rotate around the building</dd>
+      <dt>Right-drag · Shift-drag</dt><dd>Slide the view</dd>
+      <dt>Scroll · Pinch</dt><dd>Zoom toward the pointer</dd>
+      <dt>Double-click</dt><dd>Centre on that point</dd>
+    </dl>
+    <h3>Walk</h3>
+    <dl>
+      <dt>Drag</dt><dd>Look around</dd>
+      <dt>W A S D · Arrows</dt><dd>Walk (hold Shift to go faster)</dd>
+      <dt>Q · E</dt><dd>Move down or up</dd>
+      <dt>Double-click floor</dt><dd>Step to that spot</dd>
+      <dt>Touch</dt><dd>Use the stick to walk, drag to look</dd>
+    </dl>
+    <h3>Measure</h3>
+    <dl>
+      <dt>Click · Tap</dt><dd>Read the grid coordinates of a point</dd>
+      <dt>Measure</dt><dd>Click two points for slope distance, horizontal distance and height difference</dd>
+    </dl>
+    <button class="go" id="help-close">Start exploring</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"></script>
+<script>
+(async function () {
+  const $ = s => document.querySelector(s);
+  const OFFLINE = !!window.__mscpManifest;
+  const V3 = THREE.Vector3;
+  const canvas = $('#view');
+  const isTouch = matchMedia('(pointer: coarse)').matches;
+  const small = isTouch && Math.min(screen.width, screen.height) < 820;
+  const RENDER_BUDGET = small ? 3.5e6 : 14e6;   // detail points drawn per frame
+  const MEM_BUDGET = small ? 7e6 : 40e6;        // detail points kept in memory
+  const PREFETCH = 30;                           // metres: load nearby tiles even when out of view
+  const EYE = 1.6;
+
+  const S = { mode: 'orbit', level: -1, cut: true, colour: 0, edl: true, measure: false, ground: true };
+  const st = { target: new V3(), dist: 60, yaw: -2.3, pitch: 0.55, pos: new V3(), wyaw: 0, wpitch: 0 };
+  let dirty = true, tileDirty = true, man;
+
+  function toast(msg, ms = 2600) {
+    const t = $('#toast'); t.textContent = msg; t.hidden = false;
+    clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, ms);
+  }
+
+  // ---------- renderer ----------
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+  } catch (e) {
+    $('#loading div').textContent = 'This browser cannot show 3D graphics (WebGL is turned off).';
+    return;
+  }
+  if (typeof DecompressionStream === 'undefined') {
+    $('#loading div').textContent = 'This browser is too old to open the scan. Please update it, or use a current Chrome, Edge, Safari or Firefox.';
+    return;
+  }
+  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5));
+  const BG = new THREE.Color(0x0e1216);
+  renderer.setClearColor(BG, 1);
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+  camera.up.set(0, 0, 1);
+
+  const common = {
+    projScale: { value: 1 }, sizeMul: { value: 1 }, zMin: { value: -1e6 }, zMax: { value: 1e6 },
+    zLo: { value: 0 }, zHi: { value: 30 }, mode: { value: 0 }, detailDist: { value: 1e9 },
+  };
+  const ptVert = `
+    uniform float worldSize, farSize, detailDist, projScale, sizeMul, zMin, zMax, zLo, zHi;
+    uniform int mode;
+    attribute vec3 rgb;
+    varying vec3 vCol;
+    vec3 ramp(float t) {
+      vec3 a = vec3(0.16, 0.27, 0.60), b = vec3(0.10, 0.64, 0.62), c = vec3(0.96, 0.80, 0.26), d = vec3(0.90, 0.33, 0.22);
+      return t < 0.333 ? mix(a, b, t / 0.333) : t < 0.666 ? mix(b, c, (t - 0.333) / 0.333) : mix(c, d, (t - 0.666) / 0.334);
+    }
+    void main() {
+      vec4 w = modelMatrix * vec4(position, 1.0);
+      if (w.z < zMin || w.z > zMax) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; return; }
+      vec4 mv = viewMatrix * w;
+      gl_Position = projectionMatrix * mv;
+      float d = max(-mv.z, 0.1);
+      float ws = mix(worldSize, farSize, smoothstep(detailDist * 0.8, detailDist, d));
+      gl_PointSize = clamp(ws * sizeMul * projScale / d, 1.0, 64.0);
+      if (mode == 1) vCol = ramp(clamp((w.z - zLo) / max(zHi - zLo, 0.01), 0.0, 1.0)) * mix(0.6, 1.05, dot(rgb, vec3(0.333)));
+      else vCol = rgb;
+    }`;
+  const ptFrag = `
+    varying vec3 vCol;
+    void main() {
+      vec2 c = gl_PointCoord * 2.0 - 1.0;
+      if (dot(c, c) > 1.0) discard;
+      gl_FragColor = vec4(vCol, 1.0);
+    }`;
+  const mkMat = (ws, fs) => new THREE.ShaderMaterial({
+    uniforms: { ...common, worldSize: { value: ws }, farSize: { value: fs } },
+    vertexShader: ptVert, fragmentShader: ptFrag,
+  });
+
+  // eye-dome lighting: darkens depth edges so flat grey concrete reads as form
+  let rt;
+  const edl = new THREE.ShaderMaterial({
+    uniforms: { tColor: { value: null }, tDepth: { value: null }, px: { value: new THREE.Vector2() },
+      near: { value: 0.1 }, far: { value: 1000 }, strength: { value: 0.4 }, bg: { value: BG } },
+    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader: `
+      uniform sampler2D tColor, tDepth; uniform vec2 px; uniform float near, far, strength; uniform vec3 bg; varying vec2 vUv;
+      float ld(vec2 uv) { float d = texture2D(tDepth, uv).x; return d >= 1.0 ? -1.0 : log2((near * far) / (far - d * (far - near))); }
+      void main() {
+        float l0 = ld(vUv);
+        if (l0 < 0.0) { gl_FragColor = vec4(bg, 1.0); return; }
+        float s = 0.0;
+        for (int i = 0; i < 8; i++) {
+          float a = float(i) * 0.785398;
+          float l = ld(vUv + vec2(cos(a), sin(a)) * px * 1.4);
+          s += l < 0.0 ? 0.02 : min(max(0.0, l0 - l - 0.006), 0.1);
+        }
+        float shade = exp(-s / 8.0 * 300.0 * strength);
+        gl_FragColor = vec4(texture2D(tColor, vUv).rgb * shade, 1.0);
+      }`,
+    depthTest: false, depthWrite: false,
+  });
+  const quadScene = new THREE.Scene();
+  quadScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), edl));
+  const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+  function resize() {
+    renderer.setSize(innerWidth, innerHeight, false);
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    const b = renderer.getDrawingBufferSize(new THREE.Vector2());
+    if (rt) rt.dispose();
+    rt = new THREE.WebGLRenderTarget(b.x, b.y, { depthTexture: new THREE.DepthTexture(b.x, b.y), minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+    edl.uniforms.px.value.set(1 / b.x, 1 / b.y);
+    common.projScale.value = b.y / (2 * Math.tan(camera.fov * Math.PI / 360));
+    buildMini();
+    dirty = true;
+  }
+
+  // ---------- data ----------
+  try {
+    man = OFFLINE ? window.__mscpManifest : await (await fetch('manifest.json')).json();
+  } catch (e) {
+    $('#loading div').textContent = 'The scan data could not be loaded. Check your connection and reload the page.';
+    return;
+  }
+  const B = man.bounds.max;
+  const diag = Math.hypot(B[0], B[1], B[2]);
+  camera.far = diag * 4; edl.uniforms.far.value = camera.far;
+  common.zLo.value = 0; common.zHi.value = B[2];
+  const fmt = n => n.toLocaleString('en-GB');
+  $('#meta').textContent = `Laser scan · ${fmt(man.pointsCaptured)} points captured`;
+
+  const matOv = mkMat(man.voxel * 1.25, man.overviewVoxel * 1.3);
+  const matDet = mkMat(man.voxel * 1.25, man.voxel * 1.25);
+
+  function boxOf(t) {
+    const mn = new V3().fromArray(t.min);
+    return new THREE.Box3(mn, mn.clone().add(new V3().fromArray(t.ext)));
+  }
+  function makePoints(t, mat) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(t.pos, 3, true));
+    g.setAttribute('rgb', new THREE.BufferAttribute(t.col, 3, true));
+    g.boundingSphere = new THREE.Sphere(new V3(0.5, 0.5, 0.5), 0.8661);
+    g.boundingBox = new THREE.Box3(new V3(), new V3(1, 1, 1));
+    const o = new THREE.Points(g, mat);
+    o.position.fromArray(t.min); o.scale.fromArray(t.ext);
+    o.matrixAutoUpdate = false; o.updateMatrix();
+    return o;
+  }
+  // Tiles are raw bytes stored as 8-bit greyscale PNGs, every row with filter 0.
+  // Inflate the IDAT stream ourselves so no canvas (and no colour management) touches the values.
+  async function unpackPng(buf) {
+    const dv = new DataView(buf), u8 = new Uint8Array(buf);
+    const W = dv.getUint32(16), H = dv.getUint32(20);
+    const parts = [];
+    for (let p = 8; p < u8.length;) {
+      const len = dv.getUint32(p), type = String.fromCharCode(u8[p + 4], u8[p + 5], u8[p + 6], u8[p + 7]);
+      if (type === 'IDAT') parts.push(u8.subarray(p + 8, p + 8 + len));
+      p += 12 + len;
+    }
+    const raw = new Uint8Array(await new Response(new Blob(parts).stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer());
+    const out = new Uint8Array(W * H);
+    for (let r = 0; r < H; r++) out.set(raw.subarray(r * (W + 1) + 1, (r + 1) * (W + 1)), r * W);
+    return out.buffer;
+  }
+  // Offline copy (opened by double-click): data arrives as script files that call __mscpData(path, base64),
+  // because browsers refuse fetch() from file:// pages but still run <script src>.
+  const jsData = {};
+  window.__mscpData = (k, b64) => { jsData[k] = b64; };
+  function loadScript(src) {
+    return new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = src;
+      s.onload = () => { s.remove(); res(); };
+      s.onerror = () => { s.remove(); rej(new Error('load ' + src)); };
+      document.head.appendChild(s);
+    });
+  }
+  async function getBytes(file) {
+    if (!OFFLINE) {
+      const r = await fetch(file);
+      if (!r.ok) throw new Error(r.status);
+      return r.arrayBuffer();
+    }
+    await loadScript(file);
+    const b64 = jsData[file]; delete jsData[file];
+    if (!b64) throw new Error('missing ' + file);
+    const bin = atob(b64), u = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+    return u.buffer;
+  }
+  async function fetchBin(t) {
+    let buf = await getBytes(t.file);
+    const sig = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
+    if (sig[0] === 0x89 && sig[1] === 0x50 && sig[2] === 0x4e && sig[3] === 0x47) buf = await unpackPng(buf);
+    if (buf.byteLength < t.count * 9) throw new Error('short file');
+    t.pos = new Uint16Array(buf, 0, t.count * 3);
+    t.col = new Uint8Array(buf, t.count * 6, t.count * 3);
+  }
+
+  const ovs = man.overviews;   // coarse whole-site layer, split into parts for hosting
+  ovs.forEach(o => o.box = boxOf(o));
+  man.tiles.forEach(t => { t.box = boxOf(t); t.state = 0; t.obj = null; });
+  let loading = 0, loadedPts = 0, loadedTiles = 0;
+
+  function load(t) {
+    t.state = 1; loading++;
+    fetchBin(t).then(() => {
+      t.obj = makePoints(t, matDet); t.obj.visible = false; scene.add(t.obj);
+      t.state = 2; loadedPts += t.count; loadedTiles++;
+    }).catch(() => { t.state = 0; t.failed = (t.failed || 0) + 1; })
+      .finally(() => { loading--; tileDirty = true; updateProgress(); });
+  }
+  function unload(t) {
+    scene.remove(t.obj); t.obj.geometry.dispose(); t.obj = null; t.pos = t.col = null;
+    t.state = 0; loadedPts -= t.count; loadedTiles--;
+  }
+  function updateProgress() {
+    const n = man.tiles.length;
+    $('#progress i').style.width = (100 * loadedTiles / n).toFixed(1) + '%';
+    $('#progress-label').textContent = loading ? `Loading detail · ${loadedTiles}/${n} areas` : `${loadedTiles}/${n} detail areas loaded`;
+  }
+
+  const frustum = new THREE.Frustum(), pm = new THREE.Matrix4();
+  function schedule() {
+    pm.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    frustum.setFromProjectionMatrix(pm);
+    const cp = camera.position, zMin = common.zMin.value, zMax = common.zMax.value;
+    for (const t of man.tiles) {
+      t.inBand = t.box.max.z >= zMin && t.box.min.z <= zMax;
+      t.dist = t.box.distanceToPoint(cp);
+      t.inView = t.inBand && frustum.intersectsBox(t.box);
+      if (t.obj) t.obj.visible = false;
+    }
+    const cand = man.tiles.filter(t => t.inBand && (t.inView || t.dist < PREFETCH) && (t.failed || 0) < 3)
+      .sort((a, b) => a.inView === b.inView ? a.dist - b.dist : a.inView ? -1 : 1);
+    let budget = RENDER_BUDGET, dd = 1e9;
+    for (const t of cand) {
+      if (!t.inView) continue;
+      if (t.state === 2 && budget >= t.count) { t.obj.visible = true; budget -= t.count; }
+      else { dd = Math.min(dd, Math.max(t.dist, 2)); budget -= t.count; }
+    }
+    common.detailDist.value = dd;
+    for (const t of cand) {
+      if (loading >= 4) break;
+      if (t.state !== 0) continue;
+      while (loadedPts + t.count > MEM_BUDGET) {
+        const v = man.tiles.filter(x => x.state === 2 && !x.obj.visible && x.dist > t.dist).sort((a, b) => b.dist - a.dist)[0];
+        if (!v) break;
+        unload(v);
+      }
+      if (loadedPts + t.count > MEM_BUDGET) break;
+      load(t);
+    }
+    dirty = true;
+  }
+
+  // ---------- camera ----------
+  function viewDir() {
+    return S.mode === 'orbit'
+      ? new V3().subVectors(st.target, camera.position).normalize()
+      : new V3(Math.cos(st.wpitch) * Math.cos(st.wyaw), Math.cos(st.wpitch) * Math.sin(st.wyaw), Math.sin(st.wpitch));
+  }
+  function applyCam() {
+    if (S.mode === 'orbit') {
+      const c = Math.cos(st.pitch);
+      camera.position.set(st.target.x + st.dist * c * Math.cos(st.yaw), st.target.y + st.dist * c * Math.sin(st.yaw), st.target.z + st.dist * Math.sin(st.pitch));
+      camera.lookAt(st.target);
+    } else {
+      camera.position.copy(st.pos);
+      camera.lookAt(st.pos.clone().add(viewDir()));
+    }
+    camera.updateMatrixWorld();
+    dirty = true; tileDirty = true;
+  }
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const pxAngle = () => 2 * Math.tan(camera.fov * Math.PI / 360) / canvas.clientHeight;
+
+  function home() {
+    const h = man.home;
+    st.target.fromArray(h.target); st.dist = h.dist; st.yaw = h.yaw; st.pitch = h.pitch;
+    if (S.mode !== 'orbit') setMode('orbit', true);
+    applyCam();
+  }
+  function planView() {
+    if (S.mode !== 'orbit') setMode('orbit', true);
+    st.pitch = 1.5607; st.yaw = -Math.PI / 2;
+    st.target.x = clamp(st.target.x, 0, B[0]); st.target.y = clamp(st.target.y, 0, B[1]);
+    if (st.dist < 25) st.dist = Math.max(B[0], B[1]) * 0.9;
+    applyCam();
+  }
+
+  // ---------- levels ----------
+  const levels = man.levels;  // [{name, short, z, top}] in local metres, lowest first
+  const lvBox = $('#levels');
+  lvBox.innerHTML = '<div class="cap">Level</div>';
+  const mkLv = (i, label, sub) => {
+    const b = document.createElement('button');
+    b.className = 'lv'; b.dataset.i = i;
+    b.innerHTML = `<b>${label}</b><span>${sub}</span>`;
+    b.title = i < 0 ? 'Show every level' : `Go to ${levels[i].name}`;
+    b.onclick = () => setLevel(i);
+    return b;
+  };
+  for (let i = levels.length - 1; i >= 0; i--) {
+    const L = levels[i];
+    lvBox.appendChild(mkLv(i, L.short, `${L.name} · Z ${(L.z + man.offset[2]).toFixed(2)}`));
+  }
+  lvBox.appendChild(mkLv(-1, 'All', 'Whole building'));
+  const cutRow = document.createElement('label');
+  cutRow.id = 'cut';
+  cutRow.innerHTML = '<input type="checkbox" id="cutbox" checked> <span>Hide levels above</span>';
+  lvBox.appendChild(cutRow);
+  $('#cutbox').onchange = e => { S.cut = e.target.checked; updateBand(); };
+
+  function levelAt(z) {   // the level whose floor is at or just below z
+    let k = 0;
+    levels.forEach((L, i) => { if (L.z <= z + 0.6) k = i; });
+    return k;
+  }
+  function updateBand() {
+    const L = levels[S.level];
+    common.zMax.value = L && S.cut ? L.top : 1e6;
+    common.zMin.value = -1e6;
+    $('#cutbox').checked = S.cut;
+    cutRow.style.opacity = S.level >= 0 ? 1 : 0.45;
+    document.querySelectorAll('.lv').forEach(b => b.classList.toggle('on', +b.dataset.i === S.level));
+    buildMini(); tileDirty = true; dirty = true;
+  }
+  function setLevel(i) {
+    S.level = i;
+    if (i >= 0) {
+      const L = levels[i];
+      if (S.mode === 'walk') { st.pos.z = L.z + EYE; }
+      else {
+        // frame the car-park deck unless the viewer is already looking at it close up
+        const fx = man.focus[0], fy = man.focus[1];
+        if (st.dist > 90 || Math.hypot(st.target.x - fx, st.target.y - fy) > 45) {
+          st.target.set(fx, fy, L.z); st.dist = 75; st.pitch = 0.75;
+        } else st.target.z = L.z;
+        if (st.pitch < 0.35) st.pitch = 0.6;
+      }
+    }
+    updateBand(); applyCam();
+  }
+
+  // ---------- modes ----------
+  function setMode(m, quiet) {
+    if (m === S.mode) return;
+    const d = viewDir();
+    if (m === 'walk') {
+      const li = S.level >= 0 ? S.level : levelAt(st.target.z);
+      st.pos.set(st.target.x, st.target.y, levels.length ? levels[li].z + EYE : st.target.z + EYE);
+      st.wyaw = Math.atan2(d.y, d.x); st.wpitch = 0;
+      S.cutBefore = S.cut; S.cut = false; S.ground = true;
+      if (S.level < 0 && levels.length) S.level = li;
+      if (!quiet) toast(isTouch ? 'Walk mode: use the stick to move, drag to look' : 'Walk mode: W A S D to move, drag to look');
+    } else {
+      const D = 10;
+      st.target.copy(st.pos).addScaledVector(d, D);
+      st.dist = D; st.yaw = Math.atan2(-d.y, -d.x); st.pitch = clamp(Math.asin(-d.z), -1.2, 1.5607);
+      S.cut = S.cutBefore !== undefined ? S.cutBefore : true;
+    }
+    S.mode = m;
+    $('#m-orbit').classList.toggle('on', m === 'orbit');
+    $('#m-walk').classList.toggle('on', m === 'walk');
+    $('#ground').hidden = m !== 'walk';
+    $('#ground').classList.toggle('on', S.ground);
+    $('#joy').hidden = !(m === 'walk' && isTouch);
+    if (m !== 'walk') document.querySelectorAll('.lv.here').forEach(b => b.classList.remove('here'));
+    updateBand(); applyCam();
+  }
+
+  // ---------- picking ----------
+  const raycaster = new THREE.Raycaster();
+  function pick(cx, cy) {
+    const r = canvas.getBoundingClientRect();
+    raycaster.setFromCamera(new THREE.Vector2((cx - r.left) / r.width * 2 - 1, -(cy - r.top) / r.height * 2 + 1), camera);
+    const ray = raycaster.ray, o = ray.origin, d = ray.direction;
+    const tolK = 6 * pxAngle(), zMin = common.zMin.value, zMax = common.zMax.value;
+    let bestT = Infinity, best = null;
+    const sets = [...ovs, ...man.tiles.filter(t => t.state === 2 && t.obj.visible)];
+    for (const t of sets) {
+      if (!t.pos || !ray.intersectsBox(t.box.clone().expandByScalar(0.3))) continue;
+      const p = t.pos, n = t.count;
+      const mx = t.min[0], my = t.min[1], mz = t.min[2], sx = t.ext[0] / 65535, sy = t.ext[1] / 65535, sz = t.ext[2] / 65535;
+      for (let i = 0, j = 0; i < n; i++, j += 3) {
+        const wz = mz + p[j + 2] * sz;
+        if (wz < zMin || wz > zMax) continue;
+        const x = mx + p[j] * sx - o.x, y = my + p[j + 1] * sy - o.y, z = wz - o.z;
+        const tt = x * d.x + y * d.y + z * d.z;
+        if (tt < 0.15 || tt >= bestT) continue;
+        const tol = tt * tolK;
+        if (x * x + y * y + z * z - tt * tt < tol * tol) { bestT = tt; best = [x + o.x, y + o.y, wz]; }
+      }
+    }
+    return best && new V3(best[0], best[1], best[2]);
+  }
+  // highest scan point under the walker, within a step-up/step-down window
+  function floorBelow(x, y, z) {
+    const r = 0.35, lo = z - EYE - 1.3, hi = z - EYE + 0.5;
+    let best = -Infinity;
+    const sets = [...ovs, ...man.tiles.filter(t => t.state === 2)];
+    for (const t of sets) {
+      const b = t.box;
+      if (x < b.min.x - r || x > b.max.x + r || y < b.min.y - r || y > b.max.y + r || hi < b.min.z || lo > b.max.z) continue;
+      const sx = t.ext[0] / 65535, sy = t.ext[1] / 65535, sz = t.ext[2] / 65535;
+      const qx0 = (x - r - t.min[0]) / sx, qx1 = (x + r - t.min[0]) / sx, qy0 = (y - r - t.min[1]) / sy, qy1 = (y + r - t.min[1]) / sy;
+      const qz0 = (lo - t.min[2]) / sz, qz1 = (hi - t.min[2]) / sz;
+      const p = t.pos, n = t.count * 3;
+      for (let j = 0; j < n; j += 3) {
+        const qx = p[j]; if (qx < qx0 || qx > qx1) continue;
+        const qy = p[j + 1]; if (qy < qy0 || qy > qy1) continue;
+        const qz = p[j + 2]; if (qz < qz0 || qz > qz1) continue;
+        const wz = t.min[2] + qz * sz; if (wz > best) best = wz;
+      }
+    }
+    return best;
+  }
+
+  // ---------- readout & measure ----------
+  const off = man.offset;
+  const g3 = v => v.toLocaleString('en-GB', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+  let mPts = [];
+  function showPoint(p) {
+    const ro = $('#readout');
+    ro.hidden = false;
+    let html = `<div class="h">Point</div><em>E</em>${g3(p.x + off[0])}<br><em>N</em>${g3(p.y + off[1])}<br><em>Z</em>${g3(p.z + off[2])}`;
+    if (mPts.length === 2) {
+      const [a, b] = mPts;
+      html = `<div class="h">Measurement</div><em>↗</em>${g3(a.distanceTo(b))} m slope<br><em>↔</em>${g3(Math.hypot(b.x - a.x, b.y - a.y))} m horizontal<br><em>↕</em>${(b.z - a.z >= 0 ? '+' : '−') + g3(Math.abs(b.z - a.z))} m height`;
+    }
+    ro.innerHTML = html;
+  }
+  const svg = $('#overlay');
+  function drawOverlay() {
+    if (!mPts.length) { svg.innerHTML = ''; return; }
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    const sp = mPts.map(p => { const v = p.clone().project(camera); return v.z > 1 ? null : [(v.x + 1) / 2 * w, (1 - v.y) / 2 * h]; });
+    let s = '';
+    if (sp.length === 2 && sp[0] && sp[1]) {
+      s += `<line x1="${sp[0][0]}" y1="${sp[0][1]}" x2="${sp[1][0]}" y2="${sp[1][1]}" stroke="#0e1216" stroke-width="5" stroke-linecap="round"/>`;
+      s += `<line x1="${sp[0][0]}" y1="${sp[0][1]}" x2="${sp[1][0]}" y2="${sp[1][1]}" stroke="#f0b030" stroke-width="2.5" stroke-linecap="round"/>`;
+      const mx = (sp[0][0] + sp[1][0]) / 2, my = (sp[0][1] + sp[1][1]) / 2, txt = g3(mPts[0].distanceTo(mPts[1])) + ' m';
+      s += `<rect x="${mx - txt.length * 4.6 - 8}" y="${my - 13}" width="${txt.length * 9.2 + 16}" height="26" rx="6" fill="#f0b030"/>`;
+      s += `<text x="${mx}" y="${my + 5}" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="14" font-weight="500" fill="#1b1406">${txt}</text>`;
+    }
+    sp.forEach(q => { if (q) s += `<circle cx="${q[0]}" cy="${q[1]}" r="5" fill="#f0b030" stroke="#0e1216" stroke-width="2"/>`; });
+    svg.innerHTML = s;
+  }
+  function onClickPoint(cx, cy) {
+    const p = pick(cx, cy);
+    if (!p) { if (S.measure) toast('No scan point there. Try clicking on a surface.'); return; }
+    if (S.measure) {
+      if (mPts.length === 2) mPts = [];
+      mPts.push(p);
+      if (mPts.length === 1) toast('Now click the second point');
+    }
+    showPoint(p); dirty = true;
+  }
+  let anim = null;
+  function onDoublePoint(cx, cy) {
+    const p = pick(cx, cy);
+    if (!p) return;
+    if (S.mode === 'orbit') {
+      anim = { from: st.target.clone(), to: p, t: 0, dist0: st.dist, dist1: Math.min(st.dist, Math.max(8, camera.position.distanceTo(p) * 0.7)) };
+    } else {
+      const eyeFloor = st.pos.z - EYE;
+      let to;
+      if (p.z < eyeFloor + 0.6) to = new V3(p.x, p.y, p.z + EYE);           // a floor: stand on it
+      else {                                                               // a wall: stop 1 m short of it
+        const h = new V3(p.x - st.pos.x, p.y - st.pos.y, 0);
+        const len = h.length(); h.multiplyScalar(Math.max(0, len - 1) / Math.max(len, 1e-6));
+        to = new V3(st.pos.x + h.x, st.pos.y + h.y, st.pos.z);
+      }
+      anim = { from: st.pos.clone(), to, t: 0, walk: true };
+    }
+  }
+
+  // ---------- minimap ----------
+  const mini = $('#mini'), mctx = mini.getContext('2d');
+  let mapImg = null, mapS = 1, mapOX = 0, mapOY = 0;
+  function buildMini() {
+    if (!ovs[0].pos) return;
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    const W = mini.width = Math.round(mini.clientWidth * dpr), H = mini.height = Math.round(mini.clientHeight * dpr);
+    mapS = Math.min(W / B[0], H / B[1]) * 0.94; mapOX = (W - B[0] * mapS) / 2; mapOY = (H - B[1] * mapS) / 2;
+    const img = mctx.createImageData(W, H), d = img.data, zb = new Float32Array(W * H).fill(-1e9);
+    for (let i = 0; i < d.length; i += 4) { d[i] = 14; d[i + 1] = 18; d[i + 2] = 22; d[i + 3] = 255; }
+    const zMax = common.zMax.value;
+    for (const ov of ovs) {
+      if (!ov.pos) continue;
+      const p = ov.pos, c = ov.col, sx = ov.ext[0] / 65535, sy = ov.ext[1] / 65535, sz = ov.ext[2] / 65535;
+      for (let i = 0, j = 0; i < ov.count; i++, j += 3) {
+        const z = ov.min[2] + p[j + 2] * sz; if (z > zMax) continue;
+        const X = Math.floor(mapOX + (ov.min[0] + p[j] * sx) * mapS), Y = Math.floor(H - mapOY - (ov.min[1] + p[j + 1] * sy) * mapS);
+        if (X < 0 || Y < 0 || X >= W || Y >= H) continue;
+        const k = Y * W + X; if (z <= zb[k]) continue;
+        zb[k] = z; d[k * 4] = c[j]; d[k * 4 + 1] = c[j + 1]; d[k * 4 + 2] = c[j + 2];
+      }
+    }
+    mapImg = img; dirty = true;
+  }
+  function drawMini() {
+    if (!mapImg) return;
+    mctx.putImageData(mapImg, 0, 0);
+    const H = mini.height, k = mini.width / mini.clientWidth;
+    const toPx = (x, y) => [mapOX + x * mapS, H - mapOY - y * mapS];
+    const [cx, cy] = toPx(camera.position.x, camera.position.y);
+    const d = viewDir(), a = Math.atan2(-d.y, d.x), fov = 0.55, R = 26 * k;
+    mctx.fillStyle = 'rgba(240,176,48,0.28)';
+    mctx.beginPath(); mctx.moveTo(cx, cy); mctx.arc(cx, cy, R, a - fov, a + fov); mctx.closePath(); mctx.fill();
+    mctx.fillStyle = '#f0b030'; mctx.strokeStyle = '#0e1216'; mctx.lineWidth = 2 * k;
+    mctx.beginPath(); mctx.arc(cx, cy, 5 * k, 0, 7); mctx.fill(); mctx.stroke();
+  }
+  function miniMove(e) {
+    const r = mini.getBoundingClientRect(), k = mini.width / r.width;
+    const x = ((e.clientX - r.left) * k - mapOX) / mapS, y = (mini.height - mapOY - (e.clientY - r.top) * k) / mapS;
+    if (S.mode === 'orbit') { st.target.x = x; st.target.y = y; }
+    else { st.pos.x = x; st.pos.y = y; }
+    applyCam();
+  }
+  mini.addEventListener('pointerdown', e => { mini.setPointerCapture(e.pointerId); miniMove(e); });
+  mini.addEventListener('pointermove', e => { if (mini.hasPointerCapture(e.pointerId)) miniMove(e); });
+
+  // ---------- input ----------
+  const ptrs = new Map();
+  let down = null, lastTap = null, pinch = null;
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+  canvas.addEventListener('pointerdown', e => {
+    canvas.setPointerCapture(e.pointerId); canvas.focus({ preventScroll: true });
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (ptrs.size === 1) down = { x: e.clientX, y: e.clientY, t: performance.now(), moved: 0, pan: e.button === 2 || e.shiftKey || e.ctrlKey };
+    else { down = null; pinch = null; }
+    anim = null;
+  });
+  canvas.addEventListener('pointermove', e => {
+    const p = ptrs.get(e.pointerId); if (!p) return;
+    const dx = e.clientX - p.x, dy = e.clientY - p.y;
+    if (ptrs.size === 1 && down) {
+      down.moved += Math.abs(dx) + Math.abs(dy);
+      if (S.mode === 'orbit') {
+        if (down.pan) pan(dx, dy);
+        else { st.yaw -= dx * 0.006; st.pitch = clamp(st.pitch + dy * 0.006, -1.2, 1.5607); }
+      } else {
+        st.wyaw += dx * 0.0045; st.wpitch = clamp(st.wpitch + dy * 0.0045, -1.45, 1.45);
+      }
+      applyCam();
+    }
+    p.x = e.clientX; p.y = e.clientY;
+    if (ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()];
+      const dist = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      if (pinch) {
+        const f = pinch.dist / Math.max(dist, 1);
+        if (S.mode === 'orbit') { st.dist = clamp(st.dist * f, 0.5, diag * 3); pan(mx - pinch.mx, my - pinch.my); }
+        else { st.pos.addScaledVector(viewDir(), (dist - pinch.dist) * 0.03); }
+        applyCam();
+      }
+      pinch = { dist, mx, my };
+    }
+  });
+  const endPtr = e => {
+    if (!ptrs.has(e.pointerId)) return;
+    ptrs.delete(e.pointerId);
+    if (ptrs.size < 2) pinch = null;
+    if (down && ptrs.size === 0 && e.type === 'pointerup' && down.moved < 8 && performance.now() - down.t < 500) {
+      const now = performance.now();
+      if (lastTap && now - lastTap.t < 380 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 24) {
+        lastTap = null; if (!S.measure) onDoublePoint(e.clientX, e.clientY);
+      } else {
+        lastTap = { t: now, x: e.clientX, y: e.clientY };
+        onClickPoint(e.clientX, e.clientY);
+      }
+    }
+    if (ptrs.size === 0) down = null;
+  };
+  canvas.addEventListener('pointerup', endPtr);
+  canvas.addEventListener('pointercancel', endPtr);
+
+  function pan(dx, dy) {
+    const k = st.dist * pxAngle();
+    const right = new V3().setFromMatrixColumn(camera.matrixWorld, 0), up = new V3().setFromMatrixColumn(camera.matrixWorld, 1);
+    st.target.addScaledVector(right, -dx * k).addScaledVector(up, dy * k);
+  }
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const f = Math.exp(clamp(e.deltaY, -120, 120) * 0.0018);
+    const r = canvas.getBoundingClientRect();
+    raycaster.setFromCamera(new THREE.Vector2((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1), camera);
+    const rd = raycaster.ray.direction;
+    if (S.mode === 'orbit') {
+      const vd = viewDir();
+      const p = camera.position.clone().addScaledVector(rd, st.dist / Math.max(rd.dot(vd), 0.1));
+      st.target.sub(p).multiplyScalar(f).add(p);
+      st.dist = clamp(st.dist * f, 0.5, diag * 3);
+    } else {
+      st.pos.addScaledVector(rd, (1 - f) * 6);
+    }
+    applyCam();
+  }, { passive: false });
+
+  const keys = new Set();
+  addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT') return;
+    const k = e.key.toLowerCase();
+    if (['w', 'a', 's', 'd', 'q', 'e', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'shift'].includes(k)) {
+      keys.add(k); if (k.startsWith('arrow')) e.preventDefault();
+    }
+    if (k === 'escape') { if (!$('#help').hidden) closeHelp(); else if (S.measure) toggleMeasure(); }
+  });
+  addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+  addEventListener('blur', () => keys.clear());
+
+  // touch stick
+  const joy = $('#joy'), knob = joy.querySelector('i');
+  const jv = { x: 0, y: 0 };
+  const joyMove = e => {
+    const r = joy.getBoundingClientRect(), R = r.width / 2;
+    let x = (e.clientX - r.left - R) / R, y = (e.clientY - r.top - R) / R;
+    const l = Math.hypot(x, y); if (l > 1) { x /= l; y /= l; }
+    jv.x = x; jv.y = y; knob.style.transform = `translate(${x * R * 0.6}px, ${y * R * 0.6}px)`;
+  };
+  joy.addEventListener('pointerdown', e => { joy.setPointerCapture(e.pointerId); joyMove(e); });
+  joy.addEventListener('pointermove', e => { if (joy.hasPointerCapture(e.pointerId)) joyMove(e); });
+  const joyEnd = () => { jv.x = jv.y = 0; knob.style.transform = ''; };
+  joy.addEventListener('pointerup', joyEnd); joy.addEventListener('pointercancel', joyEnd);
+
+  // ---------- toolbar ----------
+  $('#m-orbit').onclick = () => setMode('orbit');
+  $('#m-walk').onclick = () => setMode('walk');
+  $('#v-home').onclick = () => { S.level = -1; updateBand(); home(); };
+  $('#v-plan').onclick = planView;
+  $('#ground').onclick = () => { S.ground = !S.ground; $('#ground').classList.toggle('on', S.ground); };
+  function toggleMeasure() {
+    S.measure = !S.measure; mPts = [];
+    $('#measure').classList.toggle('on', S.measure);
+    canvas.classList.toggle('measuring', S.measure);
+    if (S.measure) toast('Click the first point'); else $('#readout').hidden = true;
+    dirty = true;
+  }
+  $('#measure').onclick = toggleMeasure;
+  const setColour = c => { S.colour = c; common.mode.value = c; $('#c-rgb').classList.toggle('on', c === 0); $('#c-h').classList.toggle('on', c === 1); dirty = true; };
+  $('#c-rgb').onclick = () => setColour(0);
+  $('#c-h').onclick = () => setColour(1);
+  $('#edl').onclick = () => { S.edl = !S.edl; $('#edl').classList.toggle('on', S.edl); dirty = true; };
+  $('#size').oninput = e => { common.sizeMul.value = +e.target.value; dirty = true; };
+  function closeHelp() { $('#help').hidden = true; try { localStorage.setItem('mscp-help-seen', '1'); } catch (e) {} canvas.focus(); }
+  $('#helpbtn').onclick = () => $('#help').hidden = false;
+  $('#help-close').onclick = closeHelp;
+  $('#help').addEventListener('click', e => { if (e.target.id === 'help') closeHelp(); });
+  let seen = false; try { seen = localStorage.getItem('mscp-help-seen') === '1'; } catch (e) {}
+
+  // ---------- start ----------
+  addEventListener('resize', resize);
+  // one retry per overview part; carry on with whatever parts arrived
+  const got = await Promise.allSettled(ovs.map(o => fetchBin(o).catch(() => fetchBin(o))));
+  const missing = ovs.filter((o, i) => got[i].status !== 'fulfilled');
+  missing.forEach(o => ovs.splice(ovs.indexOf(o), 1));
+  if (!ovs.length) {
+    $('#loading div').textContent = 'The scan data could not be loaded. Check your connection and reload the page.';
+    return;
+  }
+  ovs.forEach(o => { o.obj = makePoints(o, matOv); scene.add(o.obj); });
+  $('#loading').hidden = true;
+  if (!seen) $('#help').hidden = false;
+  resize(); updateBand(); home(); updateProgress();
+
+  let last = performance.now(), lastSched = 0, lastGround = 0, floorZ = null;
+  function frame(now) {
+    const dt = Math.min(0.1, (now - last) / 1000); last = now;
+    // keyboard / stick movement
+    const fast = keys.has('shift') ? 4 : 1;
+    let f = (keys.has('w') || keys.has('arrowup') ? 1 : 0) - (keys.has('s') || keys.has('arrowdown') ? 1 : 0) - jv.y;
+    let s = (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0) + jv.x;
+    let u = (keys.has('e') ? 1 : 0) - (keys.has('q') ? 1 : 0);
+    if (f || s || u) {
+      if (S.mode === 'walk') {
+        const sp = 3 * fast * dt, cy = Math.cos(st.wyaw), sy = Math.sin(st.wyaw);
+        st.pos.x += (cy * f + sy * s) * sp; st.pos.y += (sy * f - cy * s) * sp;
+        if (u) { st.pos.z += u * 2 * fast * dt; if (S.ground) { S.ground = false; $('#ground').classList.remove('on'); } }
+      } else {
+        const sp = Math.max(st.dist, 5) * 0.6 * fast * dt, a = st.yaw + Math.PI, cy = Math.cos(a), sy = Math.sin(a);
+        st.target.x += (cy * f + sy * s) * sp; st.target.y += (sy * f - cy * s) * sp; st.target.z += u * sp;
+      }
+      applyCam();
+    }
+    if (anim) {
+      anim.t = Math.min(1, anim.t + dt / 0.45);
+      const e = 1 - Math.pow(1 - anim.t, 3);
+      if (anim.walk) st.pos.lerpVectors(anim.from, anim.to, e);
+      else { st.target.lerpVectors(anim.from, anim.to, e); st.dist = anim.dist0 + (anim.dist1 - anim.dist0) * e; }
+      if (anim.t >= 1) anim = null;
+      applyCam();
+    }
+    // follow the floor in walk mode (ramps, kerbs)
+    if (S.mode === 'walk' && S.ground) {
+      if (now - lastGround > 120) { lastGround = now; const z = floorBelow(st.pos.x, st.pos.y, st.pos.z); floorZ = z > -Infinity ? z : null; }
+      if (floorZ !== null && !(anim && anim.walk)) {
+        const want = floorZ + EYE;
+        if (Math.abs(want - st.pos.z) > 0.005) { st.pos.z += (want - st.pos.z) * Math.min(1, dt * 7); applyCam(); }
+      }
+      const li = levelAt(st.pos.z - EYE);
+      document.querySelectorAll('.lv').forEach(b => b.classList.toggle('here', +b.dataset.i === li));
+    }
+    if (tileDirty && now - lastSched > 200) { lastSched = now; tileDirty = false; schedule(); }
+    if (dirty) {
+      dirty = false;
+      if (S.edl) {
+        renderer.setRenderTarget(rt); renderer.clear(); renderer.render(scene, camera); renderer.setRenderTarget(null);
+        edl.uniforms.tColor.value = rt.texture; edl.uniforms.tDepth.value = rt.depthTexture;
+        renderer.render(quadScene, quadCam);
+      } else renderer.render(scene, camera);
+      drawMini(); drawOverlay();
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
