@@ -139,6 +139,10 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
   <div class="sep"></div>
   <button class="tb" id="measure" title="Click two points to measure">Measure</button>
   <div class="sep"></div>
+  <span class="lbl">Show</span>
+  <button class="tb on" id="show-scan" title="Show or hide the drone survey">Scan</button>
+  <button class="tb on" id="show-model" title="Show or hide the steel model of the car park">Model</button>
+  <div class="sep"></div>
   <div class="seg" role="group" aria-label="Colour">
     <button class="tb on" id="c-rgb" title="Scanner photo colour">Photo</button>
     <button class="tb" id="c-h" title="Colour by height">Height</button>
@@ -155,7 +159,7 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
 <div id="help" hidden>
   <div class="panel" role="dialog" aria-labelledby="help-h">
     <h2 id="help-h">Getting around</h2>
-    <p>This is the laser scan of the car park. Pick a level on the left. Use <b>Orbit</b> to fly around the outside, or <b>Walk</b> to look around at eye height. Click the small plan to jump to a spot.</p>
+    <p>This is the drone survey of the site, with the steel frame model of the car park in its place. The car park is split-level: each level is half a storey above the last, alternating between the north-west (NW) and south-east (SE) decks. Pick a level on the left. Use <b>Orbit</b> to fly around the outside, or <b>Walk</b> to look around at eye height. Click the small plan to jump to a spot.</p>
     <h3>Orbit</h3>
     <dl>
       <dt>Drag</dt><dd>Rotate around the building</dd>
@@ -170,6 +174,10 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
       <dt>Q · E</dt><dd>Move down or up</dd>
       <dt>Double-click floor</dt><dd>Step to that spot</dd>
       <dt>Touch</dt><dd>Use the stick to walk, drag to look</dd>
+    </dl>
+    <h3>Show</h3>
+    <dl>
+      <dt>Scan · Model</dt><dd>Show or hide the drone survey and the steel model</dd>
     </dl>
     <h3>Measure</h3>
     <dl>
@@ -194,7 +202,7 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
   const PREFETCH = 30;                           // metres: load nearby tiles even when out of view
   const EYE = 1.6;
 
-  const S = { mode: 'orbit', level: -1, cut: true, colour: 0, edl: true, measure: false, ground: true };
+  const S = { mode: 'orbit', level: -1, cut: true, colour: 0, edl: true, measure: false, ground: true, scan: true, model: true };
   const st = { target: new V3(), dist: 60, yaw: -2.3, pitch: 0.55, pos: new V3(), wyaw: 0, wpitch: 0 };
   let dirty = true, tileDirty = true, man;
 
@@ -220,6 +228,14 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
   renderer.setClearColor(BG, 1);
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+  // the steel model is clipped by the level cut like the points: keep z <= clip.constant
+  const clip = new THREE.Plane(new THREE.Vector3(0, 0, -1), 1e6);
+  renderer.localClippingEnabled = true;
+  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.7);
+  sun.position.set(0.4, -0.7, 1);
+  scene.add(sun);
+  let model = null;
   camera.up.set(0, 0, 1);
 
   const common = {
@@ -310,7 +326,9 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
   camera.far = diag * 4; edl.uniforms.far.value = camera.far;
   common.zLo.value = 0; common.zHi.value = B[2];
   const fmt = n => n.toLocaleString('en-GB');
-  $('#meta').textContent = `Laser scan · ${fmt(man.pointsCaptured)} points captured`;
+  $('#meta').textContent = man.model
+    ? `Drone survey · ${fmt(man.pointsCaptured)} points · steel model`
+    : `Laser scan · ${fmt(man.pointsCaptured)} points captured`;
 
   const matOv = mkMat(man.voxel * 1.25, man.overviewVoxel * 1.3);
   const matDet = mkMat(man.voxel * 1.25, man.voxel * 1.25);
@@ -410,7 +428,7 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
     frustum.setFromProjectionMatrix(pm);
     const cp = camera.position, zMin = common.zMin.value, zMax = common.zMax.value;
     for (const t of man.tiles) {
-      t.inBand = t.box.max.z >= zMin && t.box.min.z <= zMax;
+      t.inBand = S.scan && t.box.max.z >= zMin && t.box.min.z <= zMax;
       t.dist = t.box.distanceToPoint(cp);
       t.inView = t.inBand && frustum.intersectsBox(t.box);
       if (t.obj) t.obj.visible = false;
@@ -487,7 +505,7 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
   };
   for (let i = levels.length - 1; i >= 0; i--) {
     const L = levels[i];
-    lvBox.appendChild(mkLv(i, L.short, `${L.name} · Z ${(L.z + man.offset[2]).toFixed(2)}`));
+    lvBox.appendChild(mkLv(i, L.short, `${L.name}${L.side ? ' · ' + L.side : ''} · Z ${(L.z + man.offset[2]).toFixed(2)}`));
   }
   lvBox.appendChild(mkLv(-1, 'All', 'Whole building'));
   const cutRow = document.createElement('label');
@@ -504,6 +522,7 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
   function updateBand() {
     const L = levels[S.level];
     common.zMax.value = L && S.cut ? L.top : 1e6;
+    clip.constant = common.zMax.value;
     common.zMin.value = -1e6;
     $('#cutbox').checked = S.cut;
     cutRow.style.opacity = S.level >= 0 ? 1 : 0.45;
@@ -514,7 +533,7 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
     S.level = i;
     if (i >= 0) {
       const L = levels[i];
-      if (S.mode === 'walk') { st.pos.z = L.z + EYE; }
+      if (S.mode === 'walk') standOn(L);
       else {
         // frame the car-park deck unless the viewer is already looking at it close up
         const fx = man.focus[0], fy = man.focus[1];
@@ -527,6 +546,12 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
     updateBand(); applyCam();
   }
 
+  // walk start: the middle of that level's half-deck, looking down the car park
+  function standOn(L) {
+    if (L.spot) { st.pos.set(L.spot[0], L.spot[1], L.z + EYE); st.wyaw = L.yaw; st.wpitch = 0; }
+    else st.pos.z = L.z + EYE;
+  }
+
   // ---------- modes ----------
   function setMode(m, quiet) {
     if (m === S.mode) return;
@@ -535,6 +560,8 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
       const li = S.level >= 0 ? S.level : levelAt(st.target.z);
       st.pos.set(st.target.x, st.target.y, levels.length ? levels[li].z + EYE : st.target.z + EYE);
       st.wyaw = Math.atan2(d.y, d.x); st.wpitch = 0;
+      const nearCarPark = man.focus && Math.hypot(st.target.x - man.focus[0], st.target.y - man.focus[1]) < 45;
+      if (levels.length && nearCarPark) standOn(levels[li]);
       S.cutBefore = S.cut; S.cut = false; S.ground = true;
       if (S.level < 0 && levels.length) S.level = li;
       if (!quiet) toast(isTouch ? 'Walk mode: use the stick to move, drag to look' : 'Walk mode: W A S D to move, drag to look');
@@ -562,7 +589,7 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
     const ray = raycaster.ray, o = ray.origin, d = ray.direction;
     const tolK = 6 * pxAngle(), zMin = common.zMin.value, zMax = common.zMax.value;
     let bestT = Infinity, best = null;
-    const sets = [...ovs, ...man.tiles.filter(t => t.state === 2 && t.obj.visible)];
+    const sets = S.scan ? [...ovs, ...man.tiles.filter(t => t.state === 2 && t.obj.visible)] : [];
     for (const t of sets) {
       if (!t.pos || !ray.intersectsBox(t.box.clone().expandByScalar(0.3))) continue;
       const p = t.pos, n = t.count;
@@ -577,13 +604,24 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
         if (x * x + y * y + z * z - tt * tt < tol * tol) { bestT = tt; best = [x + o.x, y + o.y, wz]; }
       }
     }
+    // the steel model wins where it is in front of the nearest scan point
+    if (model && model.visible) {
+      const hit = raycaster.intersectObject(model, false).find(h => h.point.z <= zMax && h.point.z >= zMin);
+      if (hit && hit.distance < bestT) return hit.point.clone();
+    }
     return best && new V3(best[0], best[1], best[2]);
   }
+  const downRay = new THREE.Raycaster();
   // highest scan point under the walker, within a step-up/step-down window
   function floorBelow(x, y, z) {
     const r = 0.35, lo = z - EYE - 1.3, hi = z - EYE + 0.5;
     let best = -Infinity;
-    const sets = [...ovs, ...man.tiles.filter(t => t.state === 2)];
+    if (model && model.visible) {   // stand on the steel decks too (top face of the beam below)
+      downRay.set(new V3(x, y, hi), new V3(0, 0, -1)); downRay.far = hi - lo;
+      const h = downRay.intersectObject(model, false)[0];
+      if (h) best = h.point.z;
+    }
+    const sets = S.scan ? [...ovs, ...man.tiles.filter(t => t.state === 2)] : [];
     for (const t of sets) {
       const b = t.box;
       if (x < b.min.x - r || x > b.max.x + r || y < b.min.y - r || y > b.max.y + r || hi < b.min.z || lo > b.max.z) continue;
@@ -682,11 +720,28 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
         zb[k] = z; d[k * 4] = c[j]; d[k * 4 + 1] = c[j + 1]; d[k * 4 + 2] = c[j + 2];
       }
     }
-    mapImg = img; dirty = true;
+    // bake the scan raster and the steel model outline into one base canvas
+    const base = document.createElement('canvas'); base.width = W; base.height = H;
+    const bctx = base.getContext('2d');
+    bctx.putImageData(img, 0, 0);
+    if (model && model.visible) {
+      const p = model.geometry.attributes.position.array, ix = model.geometry.index.array;
+      bctx.strokeStyle = 'rgba(240,176,48,0.55)'; bctx.lineWidth = 1;
+      bctx.beginPath();
+      for (let t = 0; t < ix.length; t += 3) {
+        const a = ix[t] * 3, b = ix[t + 1] * 3, c = ix[t + 2] * 3;
+        if (p[a + 2] > zMax || p[b + 2] > zMax || p[c + 2] > zMax) continue;
+        bctx.moveTo(mapOX + p[a] * mapS, H - mapOY - p[a + 1] * mapS);
+        bctx.lineTo(mapOX + p[b] * mapS, H - mapOY - p[b + 1] * mapS);
+        bctx.lineTo(mapOX + p[c] * mapS, H - mapOY - p[c + 1] * mapS);
+      }
+      bctx.stroke();
+    }
+    mapImg = base; dirty = true;
   }
   function drawMini() {
     if (!mapImg) return;
-    mctx.putImageData(mapImg, 0, 0);
+    mctx.drawImage(mapImg, 0, 0);
     const H = mini.height, k = mini.width / mini.clientWidth;
     const toPx = (x, y) => [mapOX + x * mapS, H - mapOY - y * mapS];
     const [cx, cy] = toPx(camera.position.x, camera.position.y);
@@ -828,6 +883,32 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
   $('#c-h').onclick = () => setColour(1);
   $('#edl').onclick = () => { S.edl = !S.edl; $('#edl').classList.toggle('on', S.edl); dirty = true; };
   $('#size').oninput = e => { common.sizeMul.value = +e.target.value; dirty = true; };
+  $('#show-scan').onclick = () => {
+    S.scan = !S.scan; $('#show-scan').classList.toggle('on', S.scan);
+    ovs.forEach(o => { if (o.obj) o.obj.visible = S.scan; });
+    tileDirty = true; dirty = true;
+  };
+  $('#show-model').onclick = () => {
+    if (!model) return;
+    S.model = !S.model; $('#show-model').classList.toggle('on', S.model);
+    model.visible = S.model; buildMini();
+  };
+  async function loadModel() {
+    const M = man.model;
+    const buf = await getBytes(M.file);
+    const nv = M.vertices, nt = M.triangles, cOff = nv * 12, iOff = cOff + Math.ceil(nv * 3 / 4) * 4;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(buf, 0, nv * 3), 3));
+    g.setAttribute('color', new THREE.BufferAttribute(new Uint8Array(buf, cOff, nv * 3), 3, true));
+    g.setIndex(new THREE.BufferAttribute(new Uint32Array(buf, iOff, nt * 3), 1));
+    g.computeBoundingSphere(); g.computeBoundingBox();
+    model = new THREE.Mesh(g, new THREE.MeshPhongMaterial({
+      vertexColors: true, flatShading: true, side: THREE.DoubleSide, shininess: 18, clippingPlanes: [clip],
+    }));
+    model.visible = S.model;
+    scene.add(model);
+    buildMini(); dirty = true;
+  }
   function closeHelp() { $('#help').hidden = true; try { localStorage.setItem('mscp-help-seen', '1'); } catch (e) {} canvas.focus(); }
   $('#helpbtn').onclick = () => $('#help').hidden = false;
   $('#help-close').onclick = closeHelp;
@@ -848,6 +929,8 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
   $('#loading').hidden = true;
   if (!seen) $('#help').hidden = false;
   resize(); updateBand(); home(); updateProgress();
+  if (man.model) loadModel().catch(() => toast('The steel model could not be loaded.'));
+  else $('#show-model').hidden = true;
 
   let last = performance.now(), lastSched = 0, lastGround = 0, floorZ = null;
   function frame(now) {
