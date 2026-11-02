@@ -223,7 +223,8 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
     $('#loading div').textContent = 'This browser is too old to open the scan. Please update it, or use a current Chrome, Edge, Safari or Firefox.';
     return;
   }
-  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5));
+  // computers render at 1.5-2x for smoother edges; phones and tablets keep it light
+  renderer.setPixelRatio(isTouch ? Math.min(devicePixelRatio || 1, 1.5) : Math.min(2, Math.max(devicePixelRatio || 1, 1.5)));
   const BG = new THREE.Color(0x0e1216);
   renderer.setClearColor(BG, 1);
   const scene = new THREE.Scene();
@@ -242,11 +243,16 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
     projScale: { value: 1 }, sizeMul: { value: 1 }, zMin: { value: -1e6 }, zMax: { value: 1e6 },
     zLo: { value: 0 }, zHi: { value: 30 }, mode: { value: 0 }, detailDist: { value: 1e9 },
   };
+  // Points are drawn as round splats sized to each point's own local spacing (falls back to worldSize),
+  // with a paraboloid depth so overlapping splats merge into a smooth surface instead of flat discs.
   const ptVert = `
-    uniform float worldSize, farSize, detailDist, projScale, sizeMul, zMin, zMax, zLo, zHi;
+    uniform float worldSize, farSize, sizeUnit, detailDist, projScale, sizeMul, zMin, zMax, zLo, zHi;
     uniform int mode;
     attribute vec3 rgb;
+    attribute float psize;
     varying vec3 vCol;
+    varying vec3 vView;
+    varying float vRadius;
     vec3 ramp(float t) {
       vec3 a = vec3(0.16, 0.27, 0.60), b = vec3(0.10, 0.64, 0.62), c = vec3(0.96, 0.80, 0.26), d = vec3(0.90, 0.33, 0.22);
       return t < 0.333 ? mix(a, b, t / 0.333) : t < 0.666 ? mix(b, c, (t - 0.333) / 0.333) : mix(c, d, (t - 0.666) / 0.334);
@@ -257,21 +263,35 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
       vec4 mv = viewMatrix * w;
       gl_Position = projectionMatrix * mv;
       float d = max(-mv.z, 0.1);
-      float ws = mix(worldSize, farSize, smoothstep(detailDist * 0.8, detailDist, d));
-      gl_PointSize = clamp(ws * sizeMul * projScale / d, 1.0, 64.0);
-      if (mode == 1) vCol = ramp(clamp((w.z - zLo) / max(zHi - zLo, 0.01), 0.0, 1.0)) * mix(0.6, 1.05, dot(rgb, vec3(0.333)));
-      else vCol = rgb;
+      float diam = psize > 0.0 ? clamp(psize * 255.0 * sizeUnit, 0.02, 0.3) * 1.6 : worldSize;
+      float ws = mix(diam, max(diam, farSize), smoothstep(detailDist * 0.8, detailDist, d)) * sizeMul;
+      gl_PointSize = clamp(ws * projScale / d, 1.5, 80.0);
+      vView = mv.xyz;
+      vRadius = 0.5 * gl_PointSize * d / projScale;
+      vec3 c = rgb;
+      float l = dot(c, vec3(0.299, 0.587, 0.114));
+      c = clamp((mix(vec3(l), c, 1.12) - 0.5) * 1.06 + 0.5, 0.0, 1.0);   // gentle saturation + contrast
+      if (mode == 1) vCol = ramp(clamp((w.z - zLo) / max(zHi - zLo, 0.01), 0.0, 1.0)) * mix(0.6, 1.05, l);
+      else vCol = c;
     }`;
   const ptFrag = `
+    uniform mat4 projectionMatrix;
     varying vec3 vCol;
+    varying vec3 vView;
+    varying float vRadius;
     void main() {
       vec2 c = gl_PointCoord * 2.0 - 1.0;
-      if (dot(c, c) > 1.0) discard;
+      float r2 = dot(c, c);
+      if (r2 > 1.0) discard;
+      vec4 p = vec4(vView, 1.0);
+      p.z -= r2 * vRadius * 0.6;
+      vec4 cp = projectionMatrix * p;
+      gl_FragDepthEXT = cp.z / cp.w * 0.5 + 0.5;
       gl_FragColor = vec4(vCol, 1.0);
     }`;
   const mkMat = (ws, fs) => new THREE.ShaderMaterial({
-    uniforms: { ...common, worldSize: { value: ws }, farSize: { value: fs } },
-    vertexShader: ptVert, fragmentShader: ptFrag,
+    uniforms: { ...common, worldSize: { value: ws }, farSize: { value: fs }, sizeUnit: { value: man.sizeUnit || 0 } },
+    vertexShader: ptVert, fragmentShader: ptFrag, extensions: { fragDepth: true },
   });
 
   // eye-dome lighting: darkens depth edges so flat grey concrete reads as form
@@ -331,7 +351,7 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
     : `Laser scan · ${fmt(man.pointsCaptured)} points captured`;
 
   const matOv = mkMat(man.voxel * 1.25, man.overviewVoxel * 1.3);
-  const matDet = mkMat(man.voxel * 1.25, man.voxel * 1.25);
+  const matDet = mkMat(man.voxel * 1.25, 0);
 
   function boxOf(t) {
     const mn = new V3().fromArray(t.min);
@@ -341,6 +361,7 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(t.pos, 3, true));
     g.setAttribute('rgb', new THREE.BufferAttribute(t.col, 3, true));
+    if (t.size) g.setAttribute('psize', new THREE.BufferAttribute(t.size, 1, true));
     g.boundingSphere = new THREE.Sphere(new V3(0.5, 0.5, 0.5), 0.8661);
     g.boundingBox = new THREE.Box3(new V3(), new V3(1, 1, 1));
     const o = new THREE.Points(g, mat);
@@ -394,7 +415,8 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
     let buf = await getBytes(t.file);
     const sig = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
     if (sig[0] === 0x89 && sig[1] === 0x50 && sig[2] === 0x4e && sig[3] === 0x47) buf = await unpackPng(buf);
-    if (buf.byteLength < t.count * 9) throw new Error('short file');
+    if (buf.byteLength < t.count * (man.sizeUnit ? 10 : 9)) throw new Error('short file');
+    if (man.sizeUnit) t.size = new Uint8Array(buf, t.count * 9, t.count);
     t.pos = new Uint16Array(buf, 0, t.count * 3);
     t.col = new Uint8Array(buf, t.count * 6, t.count * 3);
   }
@@ -413,7 +435,7 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
       .finally(() => { loading--; tileDirty = true; updateProgress(); });
   }
   function unload(t) {
-    scene.remove(t.obj); t.obj.geometry.dispose(); t.obj = null; t.pos = t.col = null;
+    scene.remove(t.obj); t.obj.geometry.dispose(); t.obj = null; t.pos = t.col = t.size = null;
     t.state = 0; loadedPts -= t.count; loadedTiles--;
   }
   function updateProgress() {
@@ -929,6 +951,15 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); o
   $('#loading').hidden = true;
   if (!seen) $('#help').hidden = false;
   resize(); updateBand(); home(); updateProgress();
+  // optional start view, e.g. for sending someone to a spot: ?view=tx,ty,tz,dist,yaw,pitch (local metres, radians)
+  const qv = new URLSearchParams(location.search).get('view');
+  if (qv) {
+    const a = qv.split(',').map(Number);
+    if (a.length === 6 && a.every(isFinite)) {
+      st.target.set(a[0], a[1], a[2]); st.dist = a[3]; st.yaw = a[4]; st.pitch = a[5];
+      $('#help').hidden = true; applyCam();
+    }
+  }
   if (man.model) loadModel().catch(() => toast('The steel model could not be loaded.'));
   else $('#show-model').hidden = true;
 
