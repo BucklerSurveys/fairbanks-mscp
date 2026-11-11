@@ -42,7 +42,6 @@ label.tog { display:inline-flex; gap:6px; align-items:center; cursor:pointer; }
     <button id="fAll" aria-pressed="true">All</button>
     <button id="fSW" aria-pressed="false">Surface water</button>
     <button id="fFW" aria-pressed="false">Foul and diversion</button>
-    <button id="fWM" aria-pressed="false">Watermain</button>
     <button id="fSV" aria-pressed="false">Services (not drainage)</button>
     <button id="fGrid" aria-pressed="true">Gridlines</button>
     <button id="fSL" aria-pressed="true">Site lines</button>
@@ -57,7 +56,6 @@ label.tog { display:inline-flex; gap:6px; align-items:center; cursor:pointer; }
 <span><span class="sw" style="background:#2b7bb9"></span>Surface water pipe</span>
 <span><span class="sw" style="background:#b5563a"></span>Foul water pipe</span>
 <span><span class="sw" style="background:#7d8790"></span>Chamber</span>
-<span><span class="sw" style="background:#3a7bd5"></span>Watermain</span>
 <span><span class="sw" style="background:#e0342b"></span>Clash (red ring, hover for detail)</span>
 <span><span class="sw" style="background:#9b4a33"></span>Brickwork</span>
 <span><span class="sw" style="background:#3c4347"></span>Cover</span>
@@ -349,7 +347,7 @@ function showFilter(which){
   groups.svc.visible = which === 'all' || which === 'svc';
   groups.grid.visible = gridOn;
   groups.slines.visible = slinesOn;
-  for (const [id, key] of [['fAll','all'],['fSW','sw'],['fFW','fw'],['fWM','wm'],['fSV','svc']]) document.getElementById(id).setAttribute('aria-pressed', String(which===key));
+  for (const [id, key] of [['fAll','all'],['fSW','sw'],['fFW','fw'],['fSV','svc']]) document.getElementById(id).setAttribute('aria-pressed', String(which===key));
 }
 document.getElementById('fAll').onclick = () => showFilter('all');
 document.getElementById('fSW').onclick = () => showFilter('sw');
@@ -372,7 +370,6 @@ document.getElementById('btnClash').onclick = () => {
   document.getElementById('btnClash').setAttribute('aria-pressed', String(on));
   clashGroup.visible = on;
 };
-document.getElementById('fWM').onclick = () => showFilter('wm');
 document.getElementById('fSV').onclick = () => showFilter('svc');
 
 window.addEventListener('resize', ()=>{ camera.aspect=W()/H(); camera.updateProjectionMatrix(); renderer.setSize(W(),H()); });
