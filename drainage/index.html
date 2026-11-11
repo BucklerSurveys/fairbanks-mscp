@@ -198,7 +198,7 @@ applyCamera();
 function setMode(name){
   viewMode = name;
   for (const id of ['mOrbit','mPlan','mSide']) document.getElementById(id).setAttribute('aria-pressed', 'false');
-  if (name === 'plan') { sph = {theta: 0, phi: 0.02, r: span*1.1}; document.getElementById('mPlan').setAttribute('aria-pressed','true'); }
+  if (name === 'plan') { sph = {theta: Math.PI, phi: 0.02, r: span*1.1}; document.getElementById('mPlan').setAttribute('aria-pressed','true'); }
   else if (name === 'side') { sph = {theta: 0, phi: Math.PI/2 - 0.02, r: span*1.0}; document.getElementById('mSide').setAttribute('aria-pressed','true'); }
   else { sph = {...HOME}; document.getElementById('mOrbit').setAttribute('aria-pressed','true'); }
   target = centre.clone(); applyCamera();
