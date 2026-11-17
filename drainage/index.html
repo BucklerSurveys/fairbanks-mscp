@@ -36,6 +36,7 @@ label.tog { display:inline-flex; gap:6px; align-items:center; cursor:pointer; }
     <button id="mPlan" aria-pressed="false">Plan (from above)</button>
     <button id="mSide" aria-pressed="false">Side</button>
     <button id="mReset">Reset</button>
+    <button id="mMark" aria-pressed="false" title="Click an item to turn it between solid and wireframe (marks it as built)">Mark as built</button>
     <button id="mZoomBox" title="Hold Shift and drag a box around the area to zoom into it">Zoom box</button>
   </div>
   <div class="grp"><b>Show</b>
@@ -354,6 +355,33 @@ dom.addEventListener('mousemove', e=>{
 });
 dom.addEventListener('mouseleave', ()=>{ tip.style.display='none'; });
 document.getElementById('tipOn').addEventListener('change', e=>{ if (!e.target.checked) tip.style.display='none'; });
+
+// mark as built: when on, a click on an item turns it from solid to wireframe (and back)
+let markOn = false, markDown = null;
+document.getElementById('mMark').onclick = () => {
+  markOn = !markOn;
+  document.getElementById('mMark').setAttribute('aria-pressed', String(markOn));
+  dom.style.cursor = markOn ? 'crosshair' : '';
+};
+dom.addEventListener('pointerdown', e => { markDown = {x: e.clientX, y: e.clientY}; });
+dom.addEventListener('click', e => {
+  if (!markOn || !markDown) return;
+  if (Math.hypot(e.clientX - markDown.x, e.clientY - markDown.y) > 5) return;  // a drag, not a click
+  const r = dom.getBoundingClientRect();
+  mouse.x = ((e.clientX - r.left) / r.width) * 2 - 1; mouse.y = -((e.clientY - r.top) / r.height) * 2 + 1;
+  ray.setFromCamera(mouse, camera);
+  const vis = pickable.filter(m => m.visible !== false && (m.parent && m.parent.visible) && m.isMesh && m.material);
+  const hit = ray.intersectObjects(vis, false)[0];
+  if (!hit) return;
+  const m = hit.object;
+  if (m.userData.wireOn) {
+    m.material = m.userData.solidMat; m.userData.wireOn = false;
+  } else {
+    if (!m.userData.solidMat) m.userData.solidMat = m.material;
+    if (!m.userData.wireMat) { m.userData.wireMat = m.material.clone(); m.userData.wireMat.wireframe = true; m.userData.wireMat.transparent = true; m.userData.wireMat.opacity = 0.9; }
+    m.material = m.userData.wireMat; m.userData.wireOn = true;
+  }
+});
 
 function showFilter(which){
   groups.sw.visible = which === 'all' || which === 'sw';
